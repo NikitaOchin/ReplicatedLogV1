@@ -1,0 +1,29 @@
+version: '3'
+
+networks:
+  replicated_log_bridge:
+
+services:
+  master:
+    image: replicated_log:v1
+    command: ["python", "master.py"]
+    ports:
+      - "5000:5000"
+    networks:
+      - replicated_log_bridge
+
+  secondary1:
+    image: replicated_log:v1
+    command: ["python", "secondary.py"]
+    ports:
+      - "5001:5000"
+    networks:
+      - replicated_log_bridge
+
+  secondary2:
+    image: replicated_log:v1
+    command: ["python", "secondary.py"]
+    ports:
+      - "5002:5000"
+    networks:
+      - replicated_log_bridge
