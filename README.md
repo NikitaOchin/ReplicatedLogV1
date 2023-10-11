@@ -8,6 +8,7 @@ Command to launch app
 
 
 ## APP Description
+The Replicated Log should have the following deployment architecture: one Master and any number of Secondaries.
 Master expose a simple HTTP server with: 
 - POST method - appends a message into the in-memory list
 - GET method - returns all messages from the in-memory list
