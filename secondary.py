@@ -6,9 +6,9 @@ app = Flask(__name__)
 msgs = []
 
 
-@app.route('/')
-def hello_world():
-    return 'Hello, World!'
+# @app.route('/')
+# def hello_world():
+#     return 'Hello, World!'
 
 
 @app.route('/append', methods=['POST'])
