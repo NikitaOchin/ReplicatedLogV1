@@ -1,3 +1,4 @@
 Flask[async]==2.3.3
 requests==2.31.0
 asyncio==3.4.3
+aiohttp==3.8.6
