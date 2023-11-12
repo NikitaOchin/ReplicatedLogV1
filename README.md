@@ -1,13 +1,20 @@
-# ReplicatedLogV1
-
+# ReplicatedLog
 Command to launch app
 
 - docker build -t replicated_log:v1 .
 - docker-compose up
 
 
+## ReplicatedLogV2
+- Added environment variables for secondaries hosts
+- Added write concern
+- Added id increment for each new message in order to build the right order
+- Added random delay in order to check it work
 
-## APP Description
+
+## ReplicatedLogV1
+
+### APP Description
 The Replicated Log should have the following deployment architecture: one Master and any number of Secondaries.
 Master expose a simple HTTP server with: 
 - POST method - appends a message into the in-memory list
