@@ -26,7 +26,7 @@ async def append():
     await asyncio.sleep(delay)
 
     # Check on duplicates and sort array to get the right order
-    if any(num == new_msg[0] for num, _ in msgs):
+    if not any(num == new_msg[0] for num, _ in msgs):
         msgs.append(new_msg)
         msgs.sort(key=lambda x: x[0])
 
