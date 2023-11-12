@@ -53,7 +53,7 @@ async def append():
 
     await event.wait()
 
-    app.logger.info(f'Replication was ended for {w[0]} secondaries')
+    app.logger.info(f'Replication was ended')
 
     return jsonify({"message": "Message was created"}), 201
 
@@ -92,7 +92,7 @@ async def count_down(counter, event):
     # Function that receives counter with the remaining count of secondaries required for replication
     # When that counter equals zero - it return successful message to client
     counter[0] = counter[0] - 1
-    app.logger.info(f'X equal to {counter}')
+    app.logger.info(f'W equal to {counter}')
     if counter[0] <= 0:
         event.set()
 
