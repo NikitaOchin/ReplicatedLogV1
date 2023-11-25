@@ -50,10 +50,12 @@ async def append():
     increment_counter()
 
     # Get write concern parameter and make it list for use it as link type parameter
-    w = [int(request.get_json().get('write_concern'))]
+    w = int(request.get_json().get('write_concern'))
+
+    app.logger.debug(f"Write concern is {w}")
 
     # Set Condition for wait write concern replication
-    condition = CountDownLatch(w[0] - 1)
+    condition = CountDownLatch(w - 1)
 
     background_tasks = set()
 
@@ -100,3 +102,5 @@ async def replication_on_secondary(host, new_msg, condition):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0')
+
+
