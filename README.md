@@ -1,7 +1,7 @@
 # ReplicatedLog
 Command to launch app
 
-- docker build -t replicated_log:v1 .
+- docker build -t replicated_log:v2 .
 - docker-compose up
 
 
