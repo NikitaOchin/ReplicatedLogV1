@@ -17,6 +17,23 @@ msgs = []
 secondaries = [os.environ.get('SECONDARY1_URL'), os.environ.get('SECONDARY2_URL')]
 
 
+class CountDownLatch:
+    def __init__(self, count):
+        self.count = count
+        self.lock = asyncio.Condition()
+
+    async def count_down(self):
+        async with self.lock:
+            self.count -= 1
+            if self.count <= 0:
+                self.lock.notify_all()
+
+    async def awaiter(self):
+        async with self.lock:
+            while self.count > 0:
+                await self.lock.wait()
+
+
 def increment_counter():
     global message_counter
     message_counter += 1
@@ -35,23 +52,22 @@ async def append():
     # Get write concern parameter and make it list for use it as link type parameter
     w = [int(request.get_json().get('write_concern'))]
 
-    # Set Event for wait write concern replication
-    event = asyncio.Event()
+    # Set Condition for wait write concern replication
+    condition = CountDownLatch(w[0] - 1)
 
     background_tasks = set()
 
     # Replicate it for each secondaries
     for inx, sec in enumerate(secondaries):
-        task = asyncio.create_task(replication_on_secondary(sec, (message_counter, new_msg), counter=w, event=event))
+        task = asyncio.create_task(replication_on_secondary(sec, (message_counter, new_msg), condition=condition))
         background_tasks.add(task)
         task.add_done_callback(background_tasks.discard)
 
     # Add replication on master
-    task1 = asyncio.create_task(replication_on_master(new_msg, counter=w, event=event))
-    background_tasks.add(task1)
-    task1.add_done_callback(background_tasks.discard)
+    msgs.append((message_counter, new_msg))
+    app.logger.debug('Replication for master was ended')
 
-    await event.wait()
+    await condition.awaiter()
 
     app.logger.info(f'Replication was ended')
 
@@ -69,13 +85,7 @@ def handle_request_exception(error):
     return jsonify({"error": str(error)}), 500
 
 
-async def replication_on_master(new_msg, counter, event):
-    msgs.append((message_counter, new_msg))
-    app.logger.debug('Replication for master was ended')
-    await count_down(counter, event)
-
-
-async def replication_on_secondary(host, new_msg, counter, event):
+async def replication_on_secondary(host, new_msg, condition):
     app.logger.debug('Start replication for {0}'.format(host))
     async with aiohttp.ClientSession() as session:
         async with session.post(host + '/append', json={'message': new_msg}) as response:
@@ -85,16 +95,7 @@ async def replication_on_secondary(host, new_msg, counter, event):
 
     app.logger.debug('Replication for {0} was ended'.format(host))
 
-    await count_down(counter=counter, event=event)
-
-
-async def count_down(counter, event):
-    # Function that receives counter with the remaining count of secondaries required for replication
-    # When that counter equals zero - it return successful message to client
-    counter[0] = counter[0] - 1
-    app.logger.info(f'W equal to {counter}')
-    if counter[0] <= 0:
-        event.set()
+    await condition.count_down()
 
 
 if __name__ == '__main__':
