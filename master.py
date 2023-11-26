@@ -2,14 +2,26 @@ from flask import Flask, request, jsonify
 import requests
 import asyncio
 import logging
+import os
+from multiprocessing import Process
+import multiprocessing
+from CountDownLatch import CountDownLatch
 
 logging.getLogger().setLevel(logging.DEBUG)
 
 app = Flask(__name__)
 
+global message_counter
+message_counter = 0
+
 msgs = []
 
-secondaries = ["http://secondary1:5000", "http://secondary2:5000"]
+secondaries = [os.environ.get('SECONDARY1_URL'), os.environ.get('SECONDARY2_URL')]
+
+
+def increment_counter():
+    global message_counter
+    message_counter += 1
 
 
 @app.route('/append', methods=['POST'])
@@ -18,30 +30,38 @@ async def append():
     new_msg = request.get_json().get('message')
     if not new_msg:
         raise requests.RequestException('Your request isn\'t correct')
-
     app.logger.debug("New message is correct")
 
-    background_tasks = set()
-    # Replicate it into each secondaries
-    for sec in secondaries:
-        app.logger.debug('Start replication for {0}'.format(sec))
+    increment_counter()
 
-        task = asyncio.create_task(replication_on_secondary(sec, new_msg))
-        background_tasks.add(task)
-        task.add_done_callback(background_tasks.discard)
+    # Get write concern parameter and make it list for use it as link type parameter
+    w = multiprocessing.Value('i', int(request.get_json().get('write_concern')))
+    w.value -= 1  # Minus one as there is no need to wait for master replication
 
-    await asyncio.gather(*background_tasks)
+    # Set Condition for wait write concern replication
+    condition = CountDownLatch(count=w, app=app)
 
-    app.logger.info('Replication was ended for each secondary')
+    # Replicate it for each secondaries
+    for inx, sec in enumerate(secondaries):
+        Process(target=replication_on_secondary,
+                args=(sec, (message_counter, new_msg), condition)
+                ).start()
 
-    # Post message in master after succeed work
-    msgs.append(new_msg)
+    # Add replication on master
+    msgs.append((message_counter, new_msg))
+    app.logger.debug('Replication for master was ended')
+
+    # Wait for condition
+    condition.awaiter()
+
+    app.logger.info(f'Replication was ended')
+
     return jsonify({"message": "Message was created"}), 201
 
 
 @app.route('/msgs_list', methods=['GET'])
 def msgs_list():
-    return jsonify({'list': msgs})
+    return jsonify({'list': sorted(msgs)})
 
 
 @app.errorhandler(requests.RequestException)
@@ -50,14 +70,15 @@ def handle_request_exception(error):
     return jsonify({"error": str(error)}), 500
 
 
-async def replication_on_secondary(host, new_msg):
+def replication_on_secondary(host, new_msg, condition):
+    app.logger.debug('Start replication for {0}'.format(host))
     response = requests.post(host + '/append', json={'message': new_msg})
-
     # Check each request on succeed work
-    if response.json().get("message") != "ACK":
+    if response.status_code != 201:
         raise requests.RequestException("Do not receive an acknowledgment")
 
     app.logger.debug('Replication for {0} was ended'.format(host))
+    condition.count_down()
 
 
 if __name__ == '__main__':
