@@ -8,6 +8,8 @@ services:
   master:
     image: replicated_log:v2
     command: [ "python", "master.py" ]
+    volumes:
+      - ./master.py:/app/master.py
     ports:
       - "5000:5000"
     networks:
@@ -19,19 +21,25 @@ services:
   secondary1:
     image: replicated_log:v2
     command: [ "python", "secondary.py" ]
+    volumes:
+      - ./secondary.py:/app/secondary.py
     ports:
       - "5001:5000"
     networks:
       - replicated_log_bridge
     environment:
       - SECONDARY_DELAY=${SECONDARY1_DELAY}
+      - MASTER_URL=${MASTER_URL}
 
   secondary2:
     image: replicated_log:v2
     command: [ "python", "secondary.py" ]
+    volumes:
+      - ./secondary.py:/app/secondary.py
     ports:
       - "5002:5000"
     networks:
       - replicated_log_bridge
     environment:
       - SECONDARY_DELAY=${SECONDARY2_DELAY}
+      - MASTER_URL=${MASTER_URL}
