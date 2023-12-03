@@ -8,6 +8,7 @@ import os
 from multiprocessing import Process
 import multiprocessing
 from CountDownLatch import CountDownLatch
+from SecondaryClass import SecondaryClass
 
 logging.getLogger().setLevel(logging.DEBUG)
 
@@ -17,8 +18,9 @@ app.message_counter = 0
 
 app.msgs = []
 
-secondaries = [os.environ.get('SECONDARY1_URL'), os.environ.get('SECONDARY2_URL')]
+secondaries_hosts = [os.environ.get('SECONDARY1_URL'), os.environ.get('SECONDARY2_URL')]
 
+secondaries = []
 
 HEALTH_CHECK_INTERVAL = 10
 
@@ -73,13 +75,12 @@ def handle_request_exception(error):
     return jsonify({"error": str(error)}), 500
 
 
-def replication_on_secondary(host, new_msg, condition, delay=None, retry=False):
+def replication_on_secondary(sec, new_msg, condition, retry=False):
     app.logger.debug('Start replication for {0}'.format(host))
-
     if retry:
-        app.logger.debug('Delay equals to {0}'.format(sum(delay)))
-        time.sleep(sum(delay))
-        delay = next_delay(delay)
+        sec.set_delay(next_delay(sec.delay()))
+        app.logger.debug('Delay equals to {0}'.format(sum(sec.delay())))
+        time.sleep(sum(sec.get_delay()))
 
     try:
         response = requests.post(host + '/append', json={'message': new_msg})
@@ -89,7 +90,7 @@ def replication_on_secondary(host, new_msg, condition, delay=None, retry=False):
             raise requests.RequestException()
     except requests.RequestException as e:
         app.logger.debug(e)
-        replication_on_secondary(host, new_msg, condition, delay=delay, retry=True)
+        replication_on_secondary(host, new_msg, condition, retry=True)
 
     if not retry:
         app.logger.debug('Replication for {0} was ended'.format(host))
@@ -107,9 +108,10 @@ def next_delay(delay):
     return delay
 
 
-def check_health(host, delay=None, retry=False):
-    delay = next_delay(delay)
-    time.sleep(sum(delay))
+def check_health(sec, retry=False):
+    app.logger.debug(f'Health check with {sec.get_delay()} delay for {sec.get_host()}, {sec.get_status()}, {sec}')
+    sec.set_delay(next_delay(sec.get_delay()))
+    time.sleep(sum(sec.get_delay()))
 
     # Turn off retries in requests library in order check only my retries
     session = requests.Session()
@@ -117,15 +119,16 @@ def check_health(host, delay=None, retry=False):
     session.mount('https://', requests.adapters.HTTPAdapter(max_retries=0))
 
     while True:
-        app.logger.debug(f'Health check with {delay} delay for {host}')
+        app.logger.debug(f'Health check with {sec.get_delay()} delay for {host}')
         try:
-            response = session.get(host + '/health')
+            response = session.get(sec.get_host() + '/health')
             # Check each request on succeed work
             if response.status_code != 200:
                 raise requests.RequestException()
         except requests.RequestException as e:
             app.logger.debug(e)
-            check_health(host, delay, retry=True)
+            sec.set_status('Suspected')
+            check_health(sec, retry=True)
 
         if retry:
             break
@@ -135,8 +138,9 @@ def check_health(host, delay=None, retry=False):
 
 if __name__ == '__main__':
     for host in secondaries:
+        sec = SecondaryClass(host=host, status='Healthy', delay=None)
         health_check_thread = multiprocessing.Process(target=check_health,
-                                                      args=(host,)
+                                                      args=(sec,)
                                                       )
         health_check_thread.start()
 
