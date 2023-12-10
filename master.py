@@ -24,6 +24,18 @@ secondaries = []
 
 HEALTH_CHECK_INTERVAL = 10
 
+# Take QUORUM (for 2 sec and master is 2)
+QUORUM = (len(secondaries_hosts) + 1) // 2 + 1
+quorum_status = multiprocessing.Value('i', 1)
+
+
+def check_quorum():
+    health_hosts = 1
+    for sec in secondaries:
+        health_hosts += sec.get_status() == 'Healthy'
+    quorum_status.value = health_hosts
+    return quorum_status.value < QUORUM
+
 
 def increment_counter():
     app.message_counter += 1
@@ -31,6 +43,10 @@ def increment_counter():
 
 @app.route('/append', methods=['POST'])
 async def append():
+    app.logger.debug(f"Healthy hosts is {quorum_status.value} where quorum is {QUORUM}")
+    if check_quorum():
+        return jsonify({"message": "Server in read-only mode"}), 500
+
     # Get message
     new_msg = request.get_json().get('message')
     if not new_msg:
@@ -76,69 +92,59 @@ def handle_request_exception(error):
 
 
 def replication_on_secondary(sec, new_msg, condition, retry=False):
-    app.logger.debug('Start replication for {0}'.format(host))
+    app.logger.debug('Start replication for {0}'.format(sec.get_host()))
     if retry:
-        sec.set_delay(next_delay(sec.delay()))
-        app.logger.debug('Delay equals to {0}'.format(sum(sec.delay())))
-        time.sleep(sum(sec.get_delay()))
+        delay = sec.get_delay()
+        app.logger.debug('Delay equals to {0}'.format(delay.value))
+        time.sleep(delay.value)
 
     try:
-        response = requests.post(host + '/append', json={'message': new_msg})
+        response = requests.post(sec.get_host() + '/append', json={'message': new_msg})
 
         # Check each request on succeed work
         if response.status_code != 201:
             raise requests.RequestException()
     except requests.RequestException as e:
         app.logger.debug(e)
-        replication_on_secondary(host, new_msg, condition, retry=True)
+        replication_on_secondary(sec, new_msg, condition, retry=True)
 
     if not retry:
-        app.logger.debug('Replication for {0} was ended'.format(host))
+        app.logger.debug('Replication for {0} was ended'.format(sec.get_host()))
         condition.count_down()
 
 
-def next_delay(delay):
-    if delay is None:
-        delay = [0, 1]
-
-    buffer = delay[1]
-    delay[1] = sum(delay)
-    delay[0] = buffer
-
-    return delay
-
-
 def check_health(sec, retry=False):
-    app.logger.debug(f'Health check with {sec.get_delay()} delay for {sec.get_host()}, {sec.get_status()}, {sec}')
-    sec.set_delay(next_delay(sec.get_delay()))
-    time.sleep(sum(sec.get_delay()))
+    delay = sec.next_delay()
+    time.sleep(delay.value)
 
-    # Turn off retries in requests library in order check only my retries
+    # Turn off retries in requests library in order check/use only my retries
     session = requests.Session()
     session.mount('http://', requests.adapters.HTTPAdapter(max_retries=0))
     session.mount('https://', requests.adapters.HTTPAdapter(max_retries=0))
 
     while True:
-        app.logger.debug(f'Health check with {sec.get_delay()} delay for {host}')
+        app.logger.debug(f'Health check with {delay.value} delay for {sec.get_host()} with status {sec.get_status()}')
         try:
-            response = session.get(sec.get_host() + '/health')
+            response = session.get(sec.host + '/health')
             # Check each request on succeed work
             if response.status_code != 200:
                 raise requests.RequestException()
         except requests.RequestException as e:
-            app.logger.debug(e)
-            sec.set_status('Suspected')
+            app.logger.error(e)
             check_health(sec, retry=True)
+            sec.clear_delay()
 
         if retry:
             break
 
+        #  When secondary is healthy - I check it for each HEALTH_CHECK_INTERVAL second
         time.sleep(HEALTH_CHECK_INTERVAL)
 
 
 if __name__ == '__main__':
-    for host in secondaries:
-        sec = SecondaryClass(host=host, status='Healthy', delay=None)
+    for host in secondaries_hosts:
+        sec = SecondaryClass(host=host)
+        secondaries.append(sec)
         health_check_thread = multiprocessing.Process(target=check_health,
                                                       args=(sec,)
                                                       )
